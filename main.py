@@ -33,7 +33,22 @@ def main():
 		dest="output_jpeg",
 		default=False,
 		action="store_true",
-		help="Output to jpeg files, not png"
+		help="Output to jpeg files, not png. Should be faster but sacrifices the quality of png."
+	)
+	
+	parser.add_argument(
+		"--threads",
+		dest="threads_count",
+		default=None,
+		type=int,
+		help="Specify the number of threads to use. Default: Same as the number of detected CPU cores."
+	)
+	parser.add_argument(
+		"--single-thread",
+		dest="threads_count",
+		default=None,
+		action="store_const", const=1,
+		help="Use only one thread."
 	)
 	
 	args = parser.parse_args()
@@ -45,6 +60,7 @@ def main():
 		output_folder=args.output_folder
 	)
 	app.run(
+		threads_count=args.threads_count,
 		jpeg=args.output_jpeg
 	)
 
