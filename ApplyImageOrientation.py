@@ -8,6 +8,8 @@ from PIL import Image as PilImage
 
 
 import os
+import multiprocessing
+import threading
 
 
 class ApplyImageOrientation:
@@ -28,11 +30,51 @@ class ApplyImageOrientation:
 			"tiff"
 		]
 	
-	def run(self, jpeg=False):
+	def run(self, threads_count=None, jpeg=False):
 		
 		images_paths = self.get_input_images()
 		
-		for image_path in images_paths:
+		lock = threading.RLock()
+		threads = []
+		if threads_count is None:
+			threads_count = multiprocessing.cpu_count()
+		
+		print("Applying orientation using %s threads" % (threads_count,))
+		for i in range(threads_count):
+			t = threading.Thread(
+				target=self._apply_orientation_thread,
+				kwargs={
+					"lock": lock,
+					"images_paths": images_paths,
+					"jpeg": jpeg
+				}
+			)
+			threads.append(t)
+			t.start()
+		
+		try:
+			for t in threads:
+				t.join()
+		except KeyboardInterrupt:
+			with RAIILock(lock):
+				print("Detected keyboard interrupt; Aborting!")
+				images_paths.clear()
+	
+	def _apply_orientation_thread(self, lock: threading.RLock, images_paths: list, jpeg: bool):
+		
+		while True:
+			
+			with RAIILock(lock) as raii_lock:
+				
+				if len(images_paths) == 0:
+					break
+				
+				image_path = images_paths.pop()
+				common_path = os.path.commonpath([self.__input_folder, image_path])
+				print("Rotating: %s (%s remaining)" % (image_path[len(common_path) + 1:], len(images_paths)))
+				
+				raii_lock.release()
+			
 			self.apply_orientation(
 				image_path=image_path,
 				jpeg=jpeg
@@ -79,13 +121,17 @@ class ApplyImageOrientation:
 		rotation_degrees = 0
 		if orientation == exif.Orientation.LEFT_BOTTOM:
 			rotation_degrees = 90
+		elif orientation == exif.Orientation.BOTTOM_RIGHT:
+			rotation_degrees = 180
+		elif orientation == exif.Orientation.RIGHT_TOP:
+			rotation_degrees = 270
 		
 		if rotation_degrees != 0:
 			pil_image_rotated = pil_image.rotate(rotation_degrees, expand=True)
 		else:
 			pil_image_rotated = pil_image
 		
-		print(image_basename, pil_image.size, "==>", orientation, "==>", rotation_degrees)
+		# print(image_basename, pil_image.size, "==>", orientation, "==>", rotation_degrees)
 		
 		image_rotated_file_path = self.make_image_output_path(image_path=image_path, jpeg=jpeg)
 		self.ensure_folder(os.path.dirname(image_rotated_file_path))
@@ -108,3 +154,38 @@ class ApplyImageOrientation:
 			image_output_path = path_name + ".png"
 		
 		return image_output_path
+
+
+class RAIILock:
+
+	def __init__(self, lock: threading.RLock):
+	
+		self.__lock = lock
+	
+	def __enter__(self):
+		
+		self.acquire()
+		
+		return self
+	
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		
+		if self.__lock:
+			
+			self.release()
+			self.__lock = None
+	
+	def acquire(self):
+		
+		if self.__lock:
+			
+			self.__lock.acquire()
+	
+	def release(self):
+		
+		if self.__lock:
+			
+			try:
+				self.__lock.release()
+			except RuntimeError:
+				pass
